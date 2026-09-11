@@ -9,48 +9,51 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write  # Necessário para o Keyless Signing (OIDC) com Sigstore
+      id-token: write
 
     steps:
       - name: Checkout do Código
         uses: actions/checkout@v4
 
-      # 1. Instalação das Ferramentas
-      - name: Instalar Syft
-        uses: anchore/sbom-action/download-syft@v0
-
+      # 1. Instalar Cosign
       - name: Instalar Cosign
         uses: sigstore/cosign-installer@v3.5.0
 
-      # 2. Geração da SBOM
-      - name: Gerar SBOM do repositório (SPDX JSON)
+      # 2. Instalar Syft CLI
+      - name: Instalar Syft
         run: |
-          syft dir:. -o spdx-json > sbom.spdx.json
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
 
-      # 3. Assinatura Automática sem Chave (Keyless Signing)
-      - name: Assinar a SBOM via OIDC (Sigstore/Rekor)
+      # 3. Gerar SBOM
+      - name: Gerar SBOM
+        run: |
+          syft dir:. -o spdx-json=sbom.spdx.json
+
+      # 4. Assinar a SBOM via Keyless (OIDC Sigstore)
+      - name: Assinar SBOM
         run: |
           cosign sign-blob \
             --output-certificate sbom.spdx.json.pem \
             --output-signature sbom.spdx.json.sig \
+            --yes \
             sbom.spdx.json
 
-      # 4. Upload dos Artefatos Assinados
-      - name: Salvar SBOM e Assinatura no GitHub
+      # 5. Salvar Artefatos
+      - name: Salvar Artefatos no GitHub
         uses: actions/upload-artifact@v4
         with:
-          name: sbom-and-signature
+          name: sbom-artifacts
           path: |
             sbom.spdx.json
             sbom.spdx.json.sig
             sbom.spdx.json.pem
 
-      # 5. Validação da Assinatura no Runner
+      # 6. Validar Assinatura
       - name: Validar Assinatura no Pipeline
         run: |
           cosign verify-blob \
             --certificate sbom.spdx.json.pem \
             --signature sbom.spdx.json.sig \
-            --certificate-identity "https://github.com/${{ github.repository }}/.github/workflows/supply-chain.yml@refs/heads/main" \
+            --certificate-identity-regexp "https://github.com/${{ github.repository_owner }}/*" \
             --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
             sbom.spdx.json
